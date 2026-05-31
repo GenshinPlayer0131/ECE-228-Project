@@ -1,0 +1,20 @@
+================ Metrics ================
+Noisy Signal:
+MSE  = 11.304970
+NMSE = 1.074802
+RMSE = 3.362286
+Corr = 0.848676
+
+Denoised Signal:
+MSE  = 0.035700
+NMSE = 0.003394
+RMSE = 0.188945
+Corr = 0.999699
+
+================ Improvement ================
+MSE Reduction  = 99.68%
+NMSE Reduction = 99.68%
+RMSE Reduction = 94.38%
+Correlation Gain = 0.151023
+Correlation Gain (%) = 17.80%
+PS E:\UCSD\Spring2026\ECE 228\project\Diffusion_model> 
