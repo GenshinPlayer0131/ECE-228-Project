@@ -20,7 +20,21 @@ BATCH_SIZE = 32
 EPOCHS = 20
 LR = 1e-4
 
+# held-out split: used to *measure* overfitting, not just argue it structurally.
+# the same seed is shared by dm_main (train/val loss) and evaluate (out-of-sample NMSE),
+# so the model is never scored on a window it was trained on.
+VAL_FRAC = 0.15
+SPLIT_SEED = 0
+
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
+
+def split_indices(n, val_frac=VAL_FRAC, seed=SPLIT_SEED):
+    """Deterministic train/val index split. Returns (train_idx, val_idx), both sorted."""
+    rng = np.random.default_rng(seed)
+    perm = rng.permutation(n)
+    n_val = max(1, int(round(n * val_frac)))
+    return np.sort(perm[n_val:]), np.sort(perm[:n_val])
 
 
 def load_paired_windows(data_root=DATA_ROOT, window=WINDOW):

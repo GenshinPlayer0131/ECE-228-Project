@@ -154,6 +154,48 @@ Single-window test on `2high/sample_0.csv`. Prints true vs. estimated SNR, the c
 
 ---
 
+### Overfitting: what we guard against, and what we don't
+
+We hold out a fixed 15% of windows (`split_indices` in `dm_helpers.py`, seeded so it's identical every run). The model trains only on the other 85%; `dm_main.py` reports a held-out **validation loss** next to the train loss each epoch, and `evaluate.py` scores every method **only on the held-out split** — so the NMSE numbers are out-of-sample, not memorized.
+
+That split is the point: it lets us *measure* overfitting instead of just asserting it isn't happening. The two loss curves in `training_loss.png` tracking each other is the evidence.
+
+What we deliberately **don't** add: dropout, weight decay, or early stopping. The diffusion objective is already a strong regularizer — every step draws a fresh timestep `t` and fresh noise `ε`, so a single clean window is never seen as the same training example twice (effectively unlimited augmentation). Paired with a deliberately small model (~280k params), that's enough: the train/val gap stays flat for all 20 epochs (`training_loss.png`), so there's nothing for early stopping to catch.
+
+The paper (Yin et al., arXiv:2503.05514, Sec. V-A) *does* use validation-loss-driven LR scheduling and early stopping — they halve the LR after 20 epochs without val-loss improvement and stop after 30. That makes sense for their setup: an HDT backbone is far larger than our U-Net and they train on 30,000 packets per device, so they have both the capacity to overfit and a long enough schedule that an automatic stop matters. At our scale (280k params, ~530 train windows, 20 epochs) the curves never diverge, so we monitor the val loss but don't need the machinery. If the val curve ever pulled away from train we'd add `weight_decay` first — but spending regularization we don't need just trades overfitting for underfitting.
+
+---
+
+### Results
+
+![Sanity check](Result%20Graphs/sanity_check.png)
+
+![Training loss](Result%20Graphs/training_loss.png)
+
+Train and held-out validation loss fall together and stay overlapped for all 20 epochs — no gap opening up, which is what "not overfitting" looks like (see the section above).
+
+![Single-window test](Result%20Graphs/test_one.png)
+
+The single-window test (`2high/sample_0.csv`, input SNR +13.7 dB) is the per-method ranking in miniature: raw NMSE `0.0427`, moving avg `0.0123`, Wiener `0.0121`, wavelet `0.0090`, diffusion `0.0070` at `t*=230`. Diffusion tracks the clean curve through the dip and the sharp recovery without the residual ripple the classical filters leave behind.
+
+![NMSE vs. SNR](Result%20Graphs/evaluation.png)
+
+Swept across the 94 held-out windows (out-of-sample — none seen in training), diffusion wins at almost every SNR. It's the clear leader from ~5 dB up — roughly 3–4× lower NMSE than raw and a solid margin below wavelet, the best classical method. The one exception is the lowest bin (~−2.5 dB): when the input is that noisy, all three classical denoisers actually beat diffusion, and diffusion barely improves on raw. So diffusion is the better choice in the regime we care about, but it isn't a free lunch at very low SNR.
+
+**Oracle vs. blind SNR.** SNR mapping needs an input SNR to pick the starting step `t*`, and where that number comes from matters (see below). We plot two diffusion curves: **oracle SNR** (solid) uses the true SNR computed from the clean window, and **blind SNR** (dashed) uses `estimate_snr_db`, which works from the noisy signal alone — the deployable case. They sit almost on top of each other (median NMSE 0.019 vs. 0.021). Because the SNR→`t*` map is monotonic, a few-dB error in the estimate only nudges `t*` by a handful of steps, so the blind estimator costs us almost nothing. That's the result that says this would actually work in deployment, not just with ground truth.
+
+#### Where the SNR comes from
+
+In our pipeline `t*` is chosen by `find_t_star` from either the true or estimated SNR (the two curves above). It's worth being precise about what the paper does, because it differs from a fully blind deployment:
+
+- The paper defines `t* = argmin_t |γ_map(t) − γ|`, where **γ is "the SNR of a signal input to the noise predictor"** (Yin et al., arXiv:2503.05514, Eq. 7, Sec. IV-B). At inference (Sec. II-B) the received packet is "extracted along with the SNR value of the current signal" — i.e. γ is assumed to be measured at the receiver; no blind-estimation algorithm is given.
+- In their experiments γ is in fact **known by construction**: clean packets are all captured above 40 dB, and low-SNR cases are produced by adding artificial Gaussian noise to a *target* SNR (Sec. V-A). So their reported numbers correspond to our **oracle** curve.
+- Our **blind** curve (`estimate_snr_db`) goes a step beyond the paper by estimating γ from the noisy window alone, and shows the oracle assumption costs almost nothing here.
+
+![Denoise examples](Result%20Graphs/denoise_examples.png)
+
+---
+
 ### Pipeline
 
 ```

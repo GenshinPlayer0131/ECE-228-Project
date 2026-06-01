@@ -2,9 +2,16 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from dm_classes import RFPhaseDataset
-from dm_helpers import PROJECT_ROOT
-from inference import load_trained_model, denoise, true_snr_db
+from dm_helpers import PROJECT_ROOT, split_indices
+from inference import load_trained_model, denoise, true_snr_db, estimate_snr_db
 from baselines import BASELINES
+
+# two diffusion variants:
+#   diffusion (oracle SNR) — t* picked from the true SNR; matches what the paper does,
+#       since Yin et al. synthesize noise to a known target SNR (arXiv:2503.05514, Sec. V-A).
+#   diffusion (blind SNR)  — t* picked from estimate_snr_db(noisy) alone; the deployable case.
+DIFFUSION_ORACLE = "diffusion (oracle SNR)"
+DIFFUSION_BLIND = "diffusion (blind SNR)"
 
 
 EVAL_PLOT_PATH = PROJECT_ROOT / "evaluation.png"
@@ -24,31 +31,37 @@ def evaluate(n_ddim_steps=20, max_windows=None):
     model, schedule = load_trained_model()
     dataset = RFPhaseDataset()
 
-    n = len(dataset) if max_windows is None else min(max_windows, len(dataset))
-    print(f"evaluating on {n} windows ({n_ddim_steps} DDIM steps each)\n")
+    # score only the held-out split (same seed as dm_main) so diffusion is judged
+    # on windows it never trained on — these NMSE numbers are out-of-sample.
+    _, val_idx = split_indices(len(dataset))
+    eval_idx = val_idx if max_windows is None else val_idx[:max_windows]
+    n = len(eval_idx)
+    print(f"evaluating on {n} held-out windows ({n_ddim_steps} DDIM steps each)\n")
 
-    methods = ["raw"] + list(BASELINES.keys()) + ["diffusion"]
+    methods = ["raw"] + list(BASELINES.keys()) + [DIFFUSION_ORACLE, DIFFUSION_BLIND]
     results = {m: {"nmse": [], "snr_in_db": [], "group": []} for m in methods}
 
-    for i in range(n):
+    for count, i in enumerate(eval_idx):
         clean = dataset.windows[i]
         noisy = dataset.noisy_windows[i]
         group = group_of(dataset.sources[i])
         snr_in = true_snr_db(clean, noisy)
+        snr_est = estimate_snr_db(noisy)
 
         outputs = {"raw": noisy}
         for name, fn in BASELINES.items():
             outputs[name] = fn(noisy)
-        denoised, _ = denoise(noisy, model, schedule, snr_db_value=snr_in, n_steps=n_ddim_steps)
-        outputs["diffusion"] = denoised
+        # oracle: t* from the true SNR; blind: t* from the noisy-only estimate
+        outputs[DIFFUSION_ORACLE] = denoise(noisy, model, schedule, snr_db_value=snr_in, n_steps=n_ddim_steps)[0]
+        outputs[DIFFUSION_BLIND] = denoise(noisy, model, schedule, snr_db_value=snr_est, n_steps=n_ddim_steps)[0]
 
         for m in methods:
             results[m]["nmse"].append(nmse(outputs[m], clean))
             results[m]["snr_in_db"].append(snr_in)
             results[m]["group"].append(group)
 
-        if (i + 1) % 25 == 0 or i == n - 1:
-            print(f"  {i+1}/{n}")
+        if (count + 1) % 25 == 0 or count == n - 1:
+            print(f"  {count+1}/{n}")
 
     print("\n=== mean NMSE per method ===")
     for m in methods:
@@ -77,7 +90,9 @@ def evaluate(n_ddim_steps=20, max_windows=None):
         for lo, hi in zip(snr_bins[:-1], snr_bins[1:]):
             mask = (snr_in_arr >= lo) & (snr_in_arr < hi)
             means.append(nmse_arr[mask].mean() if mask.any() else np.nan)
-        ax.plot(bin_centers, means, marker="o", label=m)
+        # dashed for the blind diffusion curve so oracle vs. blind is easy to compare
+        style = "--" if m == DIFFUSION_BLIND else "-"
+        ax.plot(bin_centers, means, marker="o", linestyle=style, label=m)
     ax.set_xlabel("input SNR (dB)")
     ax.set_ylabel("NMSE (lower is better)")
     ax.set_yscale("log")
@@ -89,13 +104,14 @@ def evaluate(n_ddim_steps=20, max_windows=None):
     plt.close(fig)
     print(f"\nsaved {EVAL_PLOT_PATH.name}")
 
-    plot_examples(dataset, model, schedule, n_ddim_steps)
+    plot_examples(dataset, model, schedule, n_ddim_steps, pool=eval_idx)
     return results
 
 
-def plot_examples(dataset, model, schedule, n_ddim_steps=20, n_examples=3):
+def plot_examples(dataset, model, schedule, n_ddim_steps=20, n_examples=3, pool=None):
     rng = np.random.default_rng(0)
-    idx = rng.choice(len(dataset), size=min(n_examples, len(dataset)), replace=False)
+    pool = np.arange(len(dataset)) if pool is None else np.asarray(pool)
+    idx = rng.choice(pool, size=min(n_examples, len(pool)), replace=False)
 
     fig, axes = plt.subplots(n_examples, 1, figsize=(11, 3 * n_examples))
     if n_examples == 1:

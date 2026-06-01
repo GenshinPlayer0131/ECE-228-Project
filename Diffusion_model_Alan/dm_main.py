@@ -1,17 +1,42 @@
 import torch
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 
 from dm_helpers import (
-    sanity_check, make_schedule, quick_shape_test,
+    sanity_check, make_schedule, quick_shape_test, split_indices,
     CHECKPOINT_PATH, LOSS_PLOT_PATH,
     WINDOW, BETA_START, BETA_END, BATCH_SIZE, EPOCHS, LR, DEVICE,
 )
 from dm_classes import RFPhaseDataset, UNet1D
 
 
-def train(model, dataset, schedule, epochs=EPOCHS, batch_size=BATCH_SIZE, lr=LR):
+def _val_loss(model, val_x0, schedule, num_steps, seed=1234):
+    """Validation MSE on held-out windows.
+
+    Uses a *fixed* (t, epsilon) draw via a seeded generator so the number is
+    comparable epoch-to-epoch — otherwise fresh noise each call would make the
+    val curve too jittery to read against the train curve.
+    """
+    if val_x0 is None or len(val_x0) == 0:
+        return float("nan")
+    g = torch.Generator().manual_seed(seed)
+    B = val_x0.size(0)
+    t = torch.randint(0, num_steps, (B,), generator=g).to(DEVICE)
+    epsilon = torch.randn(val_x0.shape, generator=g).to(DEVICE)
+    x0 = val_x0.to(DEVICE)
+    sqrt_ab = schedule["sqrt_alpha_bars"][t].view(B, 1, 1)
+    sqrt_1m_ab = schedule["sqrt_one_minus_alpha_bars"][t].view(B, 1, 1)
+    xt = sqrt_ab * x0 + sqrt_1m_ab * epsilon
+
+    model.eval()
+    with torch.no_grad():
+        loss = F.mse_loss(model(xt, t), epsilon)
+    model.train()
+    return loss.item()
+
+
+def train(model, dataset, schedule, epochs=EPOCHS, batch_size=BATCH_SIZE, lr=LR, val_x0=None):
 
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, drop_last=True)
     optimizer = torch.optim.Adamax(model.parameters(), lr=lr)
@@ -26,6 +51,7 @@ def train(model, dataset, schedule, epochs=EPOCHS, batch_size=BATCH_SIZE, lr=LR)
 
     model.to(DEVICE).train()
     losses = []
+    val_losses = []
     for epoch in range(epochs):
         running = 0.0
         n = 0
@@ -34,7 +60,7 @@ def train(model, dataset, schedule, epochs=EPOCHS, batch_size=BATCH_SIZE, lr=LR)
             B = x0.size(0)
             t = torch.randint(0, num_steps, (B,), device=DEVICE)
             epsilon = torch.randn_like(x0)
-            
+
             sqrt_alpha_bar_t = sqrt_alpha_bars[t].view(B, 1, 1)
             sqrt_one_minus_alpha_bar_t = sqrt_one_minus_alpha_bars[t].view(B, 1, 1)
             xt = sqrt_alpha_bar_t * x0 + sqrt_one_minus_alpha_bar_t * epsilon
@@ -53,7 +79,9 @@ def train(model, dataset, schedule, epochs=EPOCHS, batch_size=BATCH_SIZE, lr=LR)
 
         avg = running / max(n, 1)
         losses.append(avg)
-        print(f"  epoch {epoch+1:3d}/{epochs}   loss={avg:.5f}")
+        v = _val_loss(model, val_x0, schedule, num_steps)
+        val_losses.append(v)
+        print(f"  epoch {epoch+1:3d}/{epochs}   train={avg:.5f}   val={v:.5f}")
 
     torch.save(
         {
@@ -66,7 +94,10 @@ def train(model, dataset, schedule, epochs=EPOCHS, batch_size=BATCH_SIZE, lr=LR)
     print(f"  saved checkpoint to {CHECKPOINT_PATH.name}")
 
     fig = plt.figure(figsize=(7, 4))
-    plt.plot(losses, marker="o")
+    plt.plot(losses, marker="o", label="train")
+    if val_x0 is not None and len(val_x0) > 0:
+        plt.plot(val_losses, marker="o", label="val (held-out)")
+        plt.legend()
     plt.xlabel("epoch")
     plt.ylabel("MSE loss (predicted noise vs true noise)")
     plt.title("Diffusion model training loss")
@@ -75,7 +106,7 @@ def train(model, dataset, schedule, epochs=EPOCHS, batch_size=BATCH_SIZE, lr=LR)
     fig.savefig(LOSS_PLOT_PATH, dpi=100)
     plt.close(fig)
     print(f"  saved loss plot to  {LOSS_PLOT_PATH.name}")
-    return losses
+    return losses, val_losses
 
 
 
@@ -96,7 +127,13 @@ if __name__ == "__main__":
     quick_shape_test(model)
 
     print("\n[4] training")
+    # hold out a fixed slice so we can watch for overfitting (train vs. val loss)
+    # and so evaluate.py scores diffusion on windows it never trained on.
+    train_idx, val_idx = split_indices(len(dataset))
+    print(f"  split: {len(train_idx)} train / {len(val_idx)} held-out windows")
+    train_set = Subset(dataset, train_idx)
+    val_x0 = torch.from_numpy(dataset.windows[val_idx]).unsqueeze(1)
     schedule = make_schedule()
-    train(model, dataset, schedule)
+    train(model, train_set, schedule, val_x0=val_x0)
 
     print("\ndone.")
