@@ -30,7 +30,7 @@ The training half mirrors the paper closely. The architecture and downstream tas
 
 ### What we changed and why
 
-**HDT → 1D U-Net.** The paper's HDT is built for complex-valued IQ (In-phase and Quadrature) signals from a Wi-Fi preamble. Our data is 1D real unwrapped phase (256 samples). A 1D U-Net is the standard choice for that shape, much smaller, and trains fine on a single GPU. We'd swap to HDT if we move to complex IQ later.
+**HDT → 1D U-Net.** The paper's HDT is built for complex-valued IQ (In-phase and Quadrature) signals from a Wi-Fi preamble. Our data is 1D real unwrapped phase (256 samples). A 1D U-Net is the standard choice for that shape, much smaller, and trains fine on a single GPU.
 
 **Classification → motion analysis.** The paper feeds denoised signals into a Transformer classifier to identify RFID dongles. We are not intrested in device identity we are intresrted in recovering phase trajectories so we can compute `v = (λ / 4π) · dφ/dt` accurately. So no classifier in our pipeline.
 
@@ -46,10 +46,10 @@ The training half mirrors the paper closely. The architecture and downstream tas
 dm_helpers.py   # config, dataset loader, schedule builder, sanity check, shape test
 dm_classes.py   # Dataset wrapper + U-Net + building blocks
 dm_main.py      # training loop + script entry point
-inference.py    # SNR mapping + DDIM denoising — turns the trained model into a denoiser
+inference.py    # SNR mapping + DDIM denoising 
 baselines.py    # moving average / Wiener / wavelet (classical comparisons)
 evaluate.py     # runs all 4 methods on the dataset and plots NMSE vs. SNR
-test_one.py     # quick single-window test (2high/sample_0.csv) for fast eyeballing
+test_one.py     # quick single-window test (2high/sample_0.csv) 
 data_reading/
   noise.py      # generates (clean, noisy) window pairs from raw RFID CSVs
 rfid_diffusion_dataset/   # generated training data (one CSV per window)
@@ -60,7 +60,7 @@ rfid_diffusion_dataset/   # generated training data (one CSV per window)
 ### Classes
 
 **`RFPhaseDataset`** (`dm_classes.py`)
-PyTorch Dataset wrapping the loaded windows. `__getitem__` returns just the clean window (shape `(1, 256)`) for diffusion training. Noisy + time arrays are kept as `.noisy_windows` and `.times` for later use at inference / evaluation.
+PyTorch Dataset wrapping the loaded windows. `__getitem__` returns the clean window (shape `(1, 256)`) for diffusion training. Noisy + time arrays are kept as `.noisy_windows` and `.times` for later use at inference / evaluation.
 
 **`SinusoidalEmbedding`** (`dm_classes.py`)
 Standard transformer-style sinusoidal embedding for the timestep `t`. Maps an integer step in `[0, T)` to a vector of length `time_dim=128` so the U-Net knows how noisy the input is.
@@ -83,7 +83,7 @@ The noise predictor ε_θ. Takes `(B, 1, 256)` noisy window + timestep `t`, retu
 Walks `rfid_diffusion_dataset/` recursively, loads every `sample_*.csv`, takes the `clean` and `noisy` columns. Normalizes each window by the clean window's mean and std so all windows live on the same scale. Skips degenerate windows where `std < 0.3` (over-smoothed flat lines). Returns `(clean, noisy, time, sources)` arrays.
 
 **`sanity_check`** (`dm_helpers.py`)
-Prints dataset stats (total count, mean, std, source breakdown) and plots 6 random windows showing clean (blue) on top of noisy (red). Warns if total windows is under 500. This is what tells us the data is healthy before we waste time training.
+Prints dataset stats (total count, mean, std, source breakdown) and plots 6 random windows showing clean (blue) on top of noisy (red). Warns if total windows is under 500. This is what tells us the data is healthy.
 
 **`make_schedule`** (`dm_helpers.py`)
 Builds the noise schedule once and returns a dict of tensors:
@@ -135,7 +135,7 @@ The high-level wrapper. Pass it `(noisy_window, model, schedule)` → get back d
 Uniform 9-sample low-pass via `np.convolve`. Cheap, smears spikes.
 
 **`wiener`** (`baselines.py`)
-`scipy.signal.wiener` with window=11. Adaptive low-pass — smooths more in low-variance regions. Strongest classical baseline for stationary Gaussian noise.
+`scipy.signal.wiener` with window=11. Adaptive low-pass, smooths more in low-variance regions. Strongest classical baseline for stationary Gaussian noise.
 
 **`wavelet_threshold`** (`baselines.py`)
 `db4` wavelet decomposition + Donoho's universal soft threshold + inverse transform. Preserves sharp features better than the other two; best classical method for non-stationary noise.
