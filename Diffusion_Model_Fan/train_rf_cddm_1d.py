@@ -13,9 +13,6 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 
 
-# ============================================================
-# Metrics Functions
-# ============================================================
 
 
 def compute_signal_metrics(clean, estimate, eps=1e-12):
