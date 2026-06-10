@@ -13,6 +13,12 @@ Install the required Python packages:
 pip install numpy pandas matplotlib torch
 ```
 
+## How to Run
+
+Please use the following command:
+```bash
+python train_rf_cddm_1d.py --data_dir \<directory containing input data\> --output_dir \<output directory\>
+```
 
 
 ## Evaluation Metrics
