@@ -17,7 +17,7 @@ pip install numpy pandas matplotlib torch
 
 Please use the following command:
 ```bash
-python train_rf_cddm_1d.py --data_dir <directory containing input data> --output_dir <output directory>
+python train_rf_cddm_1d.py  --data_dir <directory containing input data> --output_dir <output directory>
 ```
 
 
