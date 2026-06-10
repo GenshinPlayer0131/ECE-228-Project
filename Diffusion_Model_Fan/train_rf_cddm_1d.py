@@ -73,9 +73,6 @@ def compare_noisy_and_denoised(clean, noisy, denoised):
     return pd.DataFrame(rows)
 
 
-# ============================================================
-# 1. CSV loading
-# ============================================================
 
 def load_rf_csv(path: Path):
     df = pd.read_csv(path)
@@ -175,9 +172,6 @@ class RFWindowDataset(Dataset):
         return clean, noisy
 
 
-# ============================================================
-# 2. Conditional 1D denoising network
-# ============================================================
 
 class SinusoidalTimeEmbedding(nn.Module):
     def __init__(self, dim):
@@ -276,9 +270,6 @@ class ConditionalDenoiser1D(nn.Module):
         return eps_pred
 
 
-# ============================================================
-# 3. DDPM utilities
-# ============================================================
 
 def extract(a, t, x_shape):
     b = t.shape[0]
@@ -360,9 +351,6 @@ class GaussianDiffusion1D:
         return x
 
 
-# ============================================================
-# 4. Training and evaluation
-# ============================================================
 
 def split_files(csv_files, train_ratio=0.8, seed=0):
     rng = random.Random(seed)
