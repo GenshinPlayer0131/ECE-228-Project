@@ -5,6 +5,16 @@
 This code implements a Conditional Denoising Diffusion Model (CDDM) for RF signal denoising. The model takes a noisy RF signal as the input and reconstructs the denoised clean signal and then calculate the metrics.
 
 
+## Required Packages
+
+Install the required Python packages:
+
+```bash
+pip install numpy pandas matplotlib torch
+```
+
+
+
 ## Evaluation Metrics
 
 The code calculates the following as the metrics: (all between the reconstructed denoised signal and the ground truth)
